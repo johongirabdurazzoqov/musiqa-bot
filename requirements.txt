@@ -1,0 +1,5 @@
+aiogram
+yt-dlp
+shazamio
+static-ffmpeg
+aiohttp
