@@ -3,3 +3,4 @@ yt-dlp
 shazamio
 static-ffmpeg
 aiohttp
+pyaudioop
