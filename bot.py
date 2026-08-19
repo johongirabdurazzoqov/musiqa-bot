@@ -191,13 +191,13 @@ async def handle_direct_voice(message: types.Message):
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def download_social_video_and_find(message: types.Message):
     url = message.text.strip()
-    status_msg = await message.answer("⏳ Video/Audio yuklanmoqda va tahlil qilinmoqda...")
+    status_msg = await message.answer("⏳ Video yuklanmoqda...")
 
     file_prefix = f"link_vid_{message.from_user.id}_{message.message_id}"
     downloaded_file = None
 
     ydl_opts = {
-        'format': 'm4a/bestaudio/best',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': f"{file_prefix}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
@@ -216,10 +216,20 @@ async def download_social_video_and_find(message: types.Message):
         files = glob.glob(f"{file_prefix}.*")
         if files:
             downloaded_file = files[0]
+            
+            # 1. Videoni foydalanuvchiga yuborish
+            await status_msg.edit_text("📤 Video yuborilmoqda...")
+            bot_user = await bot.get_me()
+            await message.answer_video(
+                video=types.FSInputFile(downloaded_file),
+                caption=f"👉 @{bot_user.username}"
+            )
             await status_msg.delete()
+
+            # 2. Videodagi musiqani Shazam orqali izlash
             await process_audio_and_find_song(message, downloaded_file)
         else:
-            await status_msg.edit_text("❌ Faylni yuklab bo'lmadi.")
+            await status_msg.edit_text("❌ Videoni yuklab bo'lmadi.")
     except Exception as e:
         await status_msg.edit_text("❌ Havolani qayta ishlashda xatolik yuz berdi.")
         print(f"Link download error: {e}")
