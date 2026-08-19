@@ -159,7 +159,7 @@ async def handle_direct_video(message: types.Message):
         if os.path.exists(video_path):
             os.remove(video_path)
 
-# --- 2. TELEGRAM'DAN YUBORILGAN AUDIO FAYL (MP3, M4A va h.k.) ---
+# --- 2. TELEGRAM'DAN YUBORILGAN AUDIO FAYL ---
 @dp.message(F.audio)
 async def handle_direct_audio(message: types.Message):
     file_prefix = f"tg_aud_{message.from_user.id}_{message.message_id}"
@@ -173,7 +173,7 @@ async def handle_direct_audio(message: types.Message):
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
-# --- 3. TELEGRAM'DAN YUBORILGAN OVOZLI XABAR (VOICE) ---
+# --- 3. TELEGRAM'DAN YUBORILGAN OVOZLI XABAR ---
 @dp.message(F.voice)
 async def handle_direct_voice(message: types.Message):
     file_prefix = f"tg_voice_{message.from_user.id}_{message.message_id}"
@@ -187,7 +187,7 @@ async def handle_direct_voice(message: types.Message):
         if os.path.exists(voice_path):
             os.remove(voice_path)
 
-# --- 4. LINK ORQALI VIDEO/AUDIO ---
+# --- 4. LINK ORQALI VIDEO YUKLASH ---
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def download_social_video_and_find(message: types.Message):
     url = message.text.strip()
@@ -216,18 +216,18 @@ async def download_social_video_and_find(message: types.Message):
         files = glob.glob(f"{file_prefix}.*")
         if files:
             downloaded_file = files[0]
-            
-            # 1. Videoni foydalanuvchiga yuborish
-            await status_msg.edit_text("📤 Video yuborilmoqda...")
             bot_user = await bot.get_me()
+            
+            # Musiqa qidirish uchun inline tugma
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🎵 Musiqani topish", callback_data="find_music_from_video")
+
+            await status_msg.delete()
             await message.answer_video(
                 video=types.FSInputFile(downloaded_file),
-                caption=f"👉 @{bot_user.username}"
+                caption=f"👉 @{bot_user.username}",
+                reply_markup=builder.as_markup()
             )
-            await status_msg.delete()
-
-            # 2. Videodagi musiqani Shazam orqali izlash
-            await process_audio_and_find_song(message, downloaded_file)
         else:
             await status_msg.edit_text("❌ Videoni yuklab bo'lmadi.")
     except Exception as e:
@@ -236,6 +236,28 @@ async def download_social_video_and_find(message: types.Message):
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
             os.remove(downloaded_file)
+
+# --- 4.1. "MUSIQANI TOPISH" TUGMASI BOSILGANDA ---
+@dp.callback_query(F.data == "find_music_from_video")
+async def handle_find_music_button(callback: types.CallbackQuery):
+    await callback.answer()
+    
+    # Videoni bot fayl serveridan yuklab olib Shazam'ga beramiz
+    video = callback.message.video
+    if not video:
+        await callback.message.answer("❌ Video fayli topilmadi.")
+        return
+
+    file_prefix = f"btn_vid_{callback.from_user.id}_{callback.message.message_id}"
+    video_path = f"{file_prefix}.mp4"
+
+    try:
+        video_file = await bot.get_file(video.file_id)
+        await bot.download_file(video_file.file_path, video_path)
+        await process_audio_and_find_song(callback.message, video_path)
+    finally:
+        if os.path.exists(video_path):
+            os.remove(video_path)
 
 # --- 5. NOMI BO'YICHA QIDIRUV ---
 @dp.message(F.text)
