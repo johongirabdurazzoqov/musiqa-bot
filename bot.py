@@ -7,7 +7,7 @@ import glob
 import logging
 import html
 import ssl
-import re
+import sys
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
@@ -16,12 +16,13 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from yt_dlp import YoutubeDL
 from shazamio import Shazam
 
-# Symphonia va ffmpeg warning xabarlarini bostirish
+# Logging sozlamalari
 logging.getLogger("symphonia").setLevel(logging.ERROR)
 logging.getLogger("symphonia_bundle_mp3").setLevel(logging.ERROR)
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = "8808125320:AAF0ELVtGPEiQN8G2ClFBGngPqJQhz0X2MU"
+# Tokenni muhit o'zgaruvchisidan olish tavsiya etiladi
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8808125320:AAF0ELVtGPEiQN8G2ClFBGngPqJQhz0X2MU")
 
 bot = None
 connector = None
@@ -75,6 +76,16 @@ def create_page_response(user_id, page=0):
 
     return text, builder.as_markup()
 
+async def extract_audio_from_video(video_path: str, output_audio_path: str):
+    """FFmpeg orqali videodan audioni xavfsiz ajratib olish."""
+    proc = await asyncio.create_subprocess_exec(
+        'ffmpeg', '-y', '-i', video_path, '-vn', '-ac', '2', '-ar', '44100', output_audio_path,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL
+    )
+    await proc.wait()
+    return os.path.exists(output_audio_path)
+
 async def process_audio_and_find_song(message: types.Message, file_path: str):
     status_msg = await message.answer("🎧 Fayldagi qo'shiq Shazam orqali aniqlanmoqda...")
     
@@ -85,11 +96,13 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
         track = out.get('track') if isinstance(out, dict) else None
 
         if track:
-            song_name = f"{track.get('subtitle', '')} - {track.get('title', '')}".strip()
+            subtitle = track.get('subtitle', '')
+            title = track.get('title', '')
+            song_name = f"{subtitle} - {title}".strip(" -")
         else:
             song_name = None
 
-        if not song_name or song_name == "-":
+        if not song_name:
             await status_msg.edit_text("❌ Afsuski, Shazam fayldagi qo'shiqni aniqlay olmadi.")
             return
 
@@ -105,11 +118,11 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
             'ignoreerrors': True,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web']
+                    'player_client': ['ios', 'android', 'mweb', 'web']
                 }
             },
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             }
         }
 
@@ -120,7 +133,7 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
         entries = [e for e in raw_entries if e is not None]
 
         if not entries:
-            await status_msg.edit_text("❌ Qo'shiq nomi aniqlandi, lekin yuklab olish uchun fayllar topilmadi.")
+            await status_msg.edit_text("❌ Qo'shiq nomi aniqlandi, lekin yuklab olish uchun manbalar topilmadi.")
             return
 
         user_search_data[message.from_user.id] = {
@@ -133,8 +146,8 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
         await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
 
     except Exception as e:
-        print(f"Shazam search error: {e}")
-        await status_msg.edit_text("❌ Qo'shiqni aniqlashda xatolik yuz berdi.")
+        logging.error(f"Shazam/YT Search error: {e}")
+        await status_msg.edit_text("❌ Qo'shiqni aniqlashda yoki qidirishda xatolik yuz berdi.")
 
 # --- START COMMAND ---
 @dp.message(CommandStart())
@@ -156,14 +169,9 @@ async def handle_direct_video(message: types.Message):
         video_file = await bot.get_file(message.video.file_id)
         await bot.download_file(video_file.file_path, video_path)
 
-        proc = await asyncio.create_subprocess_exec(
-            'ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-ar', '44100', '-ac', '2', audio_path,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await proc.wait()
+        converted = await extract_audio_from_video(video_path, audio_path)
+        target_file = audio_path if converted else video_path
 
-        target_file = audio_path if os.path.exists(audio_path) else video_path
         await process_audio_and_find_song(message, target_file)
 
     finally:
@@ -217,7 +225,7 @@ async def download_social_video_and_find(message: types.Message):
         'geo_bypass': True,
         'ignoreerrors': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         }
     }
 
@@ -230,7 +238,6 @@ async def download_social_video_and_find(message: types.Message):
             downloaded_file = files[0]
             bot_user = await bot.get_me()
             
-            # Musiqa qidirish uchun inline tugma
             builder = InlineKeyboardBuilder()
             builder.button(text="🎵 Musiqani topish", callback_data="find_music_from_video")
 
@@ -244,7 +251,7 @@ async def download_social_video_and_find(message: types.Message):
             await status_msg.edit_text("❌ Videoni yuklab bo'lmadi.")
     except Exception as e:
         await status_msg.edit_text("❌ Havolani qayta ishlashda xatolik yuz berdi.")
-        print(f"Link download error: {e}")
+        logging.error(f"Link download error: {e}")
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
             os.remove(downloaded_file)
@@ -267,20 +274,13 @@ async def handle_find_music_button(callback: types.CallbackQuery):
         video_file = await bot.get_file(video.file_id)
         await bot.download_file(video_file.file_path, video_path)
 
-        # Videodan MP3 audio ajratib olish (ffmpeg yordamida)
-        proc = await asyncio.create_subprocess_exec(
-            'ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-ar', '44100', '-ac', '2', audio_path,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-        await proc.wait()
+        converted = await extract_audio_from_video(video_path, audio_path)
+        target_file = audio_path if converted else video_path
 
-        # Agar mp3 hosil bo'lsa, o'shani Shazam'ga yuboramiz
-        target_file = audio_path if os.path.exists(audio_path) else video_path
         await process_audio_and_find_song(callback.message, target_file)
 
     except Exception as e:
-        print(f"Video convert error: {e}")
+        logging.error(f"Video convert error: {e}")
         await callback.message.answer("❌ Videodan audioni ajratishda xatolik bo'ldi.")
     finally:
         for path in [video_path, audio_path]:
@@ -303,11 +303,11 @@ async def search_music(message: types.Message):
         'ignoreerrors': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['ios', 'android', 'mweb', 'web']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         }
     }
 
@@ -332,6 +332,7 @@ async def search_music(message: types.Message):
         await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
 
     except Exception as e:
+        logging.error(f"Text search error: {e}")
         await status_msg.edit_text("❌ Afsuski, qidiruvda xatolik yuz berdi.")
 
 # --- PAGINATION & DOWNLOAD ---
@@ -374,11 +375,11 @@ async def download_selected_music(callback: types.CallbackQuery):
         'geo_bypass': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['ios', 'android', 'mweb', 'web']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         }
     }
 
@@ -426,7 +427,7 @@ async def download_selected_music(callback: types.CallbackQuery):
             await status_msg.edit_text("❌ Qo'shiqni yuklashda xatolik yuz berdi.")
         except Exception:
             pass
-        print(f"Yuklash xatoligi: {e}")
+        logging.error(f"Yuklash xatoligi: {e}")
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
             os.remove(downloaded_file)
@@ -448,10 +449,10 @@ async def main():
 
     while True:
         try:
-            print("Bot ishga tushmoqda...")
+            logging.info("Bot ishga tushmoqda...")
             await dp.start_polling(bot)
         except Exception as e:
-            print(f"Xatolik: {e}. 5 soniyadan keyin qayta ulanadi...")
+            logging.error(f"Xatolik: {e}. 5 soniyadan keyin qayta ulanadi...")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
