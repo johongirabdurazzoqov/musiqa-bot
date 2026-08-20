@@ -150,14 +150,26 @@ async def start_handler(message: types.Message):
 async def handle_direct_video(message: types.Message):
     file_prefix = f"tg_vid_{message.from_user.id}_{message.message_id}"
     video_path = f"{file_prefix}.mp4"
+    audio_path = f"{file_prefix}.mp3"
 
     try:
         video_file = await bot.get_file(message.video.file_id)
         await bot.download_file(video_file.file_path, video_path)
-        await process_audio_and_find_song(message, video_path)
+
+        proc = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-ar', '44100', '-ac', '2', audio_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await proc.wait()
+
+        target_file = audio_path if os.path.exists(audio_path) else video_path
+        await process_audio_and_find_song(message, target_file)
+
     finally:
-        if os.path.exists(video_path):
-            os.remove(video_path)
+        for path in [video_path, audio_path]:
+            if os.path.exists(path):
+                os.remove(path)
 
 # --- 2. TELEGRAM'DAN YUBORILGAN AUDIO FAYL ---
 @dp.message(F.audio)
@@ -240,9 +252,8 @@ async def download_social_video_and_find(message: types.Message):
 # --- 4.1. "MUSIQANI TOPISH" TUGMASI BOSILGANDA ---
 @dp.callback_query(F.data == "find_music_from_video")
 async def handle_find_music_button(callback: types.CallbackQuery):
-    await callback.answer()
+    await callback.answer("⏳ Musiqa aniqlanmoqda...")
     
-    # Videoni bot fayl serveridan yuklab olib Shazam'ga beramiz
     video = callback.message.video
     if not video:
         await callback.message.answer("❌ Video fayli topilmadi.")
@@ -250,14 +261,31 @@ async def handle_find_music_button(callback: types.CallbackQuery):
 
     file_prefix = f"btn_vid_{callback.from_user.id}_{callback.message.message_id}"
     video_path = f"{file_prefix}.mp4"
+    audio_path = f"{file_prefix}.mp3"
 
     try:
         video_file = await bot.get_file(video.file_id)
         await bot.download_file(video_file.file_path, video_path)
-        await process_audio_and_find_song(callback.message, video_path)
+
+        # Videodan MP3 audio ajratib olish (ffmpeg yordamida)
+        proc = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-ar', '44100', '-ac', '2', audio_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await proc.wait()
+
+        # Agar mp3 hosil bo'lsa, o'shani Shazam'ga yuboramiz
+        target_file = audio_path if os.path.exists(audio_path) else video_path
+        await process_audio_and_find_song(callback.message, target_file)
+
+    except Exception as e:
+        print(f"Video convert error: {e}")
+        await callback.message.answer("❌ Videodan audioni ajratishda xatolik bo'ldi.")
     finally:
-        if os.path.exists(video_path):
-            os.remove(video_path)
+        for path in [video_path, audio_path]:
+            if os.path.exists(path):
+                os.remove(path)
 
 # --- 5. NOMI BO'YICHA QIDIRUV ---
 @dp.message(F.text)
