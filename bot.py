@@ -77,13 +77,17 @@ def create_page_response(user_id, page=0):
     return text, builder.as_markup()
 
 async def extract_audio_from_video(video_path: str, output_audio_path: str):
-    proc = await asyncio.create_subprocess_exec(
-        'ffmpeg', '-y', '-i', video_path, '-vn', '-ac', '2', '-ar', '44100', output_audio_path,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL
-    )
-    await proc.wait()
-    return os.path.exists(output_audio_path)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-y', '-i', video_path, '-vn', '-ac', '2', '-ar', '44100', '-ab', '192k', output_audio_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await proc.wait()
+        return os.path.exists(output_audio_path) and os.path.getsize(output_audio_path) > 0
+    except Exception as e:
+        logging.error(f"FFmpeg conversion error: {e}")
+        return False
 
 async def process_audio_and_find_song(message: types.Message, file_path: str):
     status_msg = await message.answer("🎧 Fayldagi qo'shiq Shazam orqali aniqlanmoqda...")
@@ -167,7 +171,10 @@ async def handle_direct_video(message: types.Message):
     finally:
         for path in [video_path, audio_path]:
             if os.path.exists(path):
-                os.remove(path)
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
 @dp.message(F.audio)
 async def handle_direct_audio(message: types.Message):
@@ -180,7 +187,10 @@ async def handle_direct_audio(message: types.Message):
         await process_audio_and_find_song(message, audio_path)
     finally:
         if os.path.exists(audio_path):
-            os.remove(audio_path)
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
 
 @dp.message(F.voice)
 async def handle_direct_voice(message: types.Message):
@@ -193,7 +203,10 @@ async def handle_direct_voice(message: types.Message):
         await process_audio_and_find_song(message, voice_path)
     finally:
         if os.path.exists(voice_path):
-            os.remove(voice_path)
+            try:
+                os.remove(voice_path)
+            except Exception:
+                pass
 
 # --- SOCIAL MEDIA (INSTAGRAM, TIKTOK, YOUTUBE) LINKS ---
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
@@ -204,7 +217,6 @@ async def download_social_video_and_find(message: types.Message):
     file_prefix = f"link_vid_{message.from_user.id}_{message.message_id}"
     downloaded_file = None
 
-    # Instagram Reels, TikTok va YouTube uchun moslashtirilgan eng optimal sozlamalar
     ydl_opts = {
         'format': 'best',
         'outtmpl': f"{file_prefix}.%(ext)s",
@@ -245,7 +257,10 @@ async def download_social_video_and_find(message: types.Message):
         logging.error(f"Link download error: {e}")
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
-            os.remove(downloaded_file)
+            try:
+                os.remove(downloaded_file)
+            except Exception:
+                pass
 
 @dp.callback_query(F.data == "find_music_from_video")
 async def handle_find_music_button(callback: types.CallbackQuery):
@@ -275,7 +290,10 @@ async def handle_find_music_button(callback: types.CallbackQuery):
     finally:
         for path in [video_path, audio_path]:
             if os.path.exists(path):
-                os.remove(path)
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
 @dp.message(F.text)
 async def search_music(message: types.Message):
@@ -399,7 +417,10 @@ async def download_selected_music(callback: types.CallbackQuery):
         logging.error(f"Yuklash xatoligi: {e}")
     finally:
         if downloaded_file and os.path.exists(downloaded_file):
-            os.remove(downloaded_file)
+            try:
+                os.remove(downloaded_file)
+            except Exception:
+                pass
 
 async def main():
     global bot
