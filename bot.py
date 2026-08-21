@@ -7,7 +7,6 @@ import glob
 import logging
 import html
 import ssl
-import sys
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
@@ -16,19 +15,17 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from yt_dlp import YoutubeDL
 from shazamio import Shazam
 
-# Logging sozlamalari
 logging.getLogger("symphonia").setLevel(logging.ERROR)
 logging.getLogger("symphonia_bundle_mp3").setLevel(logging.ERROR)
 logging.basicConfig(level=logging.INFO)
 
-# Tokenni muhit o'zgaruvchisidan olish tavsiya etiladi
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8808125320:AAF0ELVtGPEiQN8G2ClFBGngPqJQhz0X2MU")
 
 bot = None
-connector = None
 dp = Dispatcher()
 
-user_search_data = {}
+# Foydalanuvchilarning sahifa holatini va oxirgi qidiruvini saqlash uchun
+user_last_search = {}
 
 def format_duration(seconds):
     if not seconds:
@@ -38,7 +35,7 @@ def format_duration(seconds):
     return f"{mins}:{secs:02d}"
 
 def create_page_response(user_id, page=0):
-    data = user_search_data.get(user_id, {})
+    data = user_last_search.get(user_id, {})
     entries = data.get('entries', [])
     query = data.get('query', '')
 
@@ -56,11 +53,15 @@ def create_page_response(user_id, page=0):
         title = html.escape(entry.get('title', 'Noma\'lum'))
         duration = format_duration(entry.get('duration'))
         duration_str = f" <b>{duration}</b>" if duration else ""
+        video_id = entry.get('id')
         
         text += f"<b>{idx}.</b> <i>{title}</i>{duration_str}\n"
-        row_buttons.append(
-            types.InlineKeyboardButton(text=str(idx), callback_data=f"dl_{idx-1}")
-        )
+        
+        # Tugma callback_data'siga to'g'ridan-to'g'ri YouTube Video ID joylanadi
+        if video_id:
+            row_buttons.append(
+                types.InlineKeyboardButton(text=str(idx), callback_data=f"dl_{video_id}")
+            )
 
     for i in range(0, len(row_buttons), 5):
         builder.row(*row_buttons[i:i+5])
@@ -77,7 +78,6 @@ def create_page_response(user_id, page=0):
     return text, builder.as_markup()
 
 async def extract_audio_from_video(video_path: str, output_audio_path: str):
-    """FFmpeg orqali videodan audioni xavfsiz ajratib olish."""
     proc = await asyncio.create_subprocess_exec(
         'ffmpeg', '-y', '-i', video_path, '-vn', '-ac', '2', '-ar', '44100', output_audio_path,
         stdout=asyncio.subprocess.DEVNULL,
@@ -116,11 +116,7 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
             'geo_bypass': True,
             'noplaylist': True,
             'ignoreerrors': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['ios', 'android', 'mweb', 'web']
-                }
-            },
+            'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'mweb', 'web']}},
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             }
@@ -130,16 +126,13 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
         info = await loop.run_in_executor(None, lambda: YoutubeDL(yt_opts).extract_info(song_name, download=False))
         
         raw_entries = info.get('entries', []) if info else []
-        entries = [e for e in raw_entries if e is not None]
+        entries = [e for e in raw_entries if e is not None and e.get('id')]
 
         if not entries:
             await status_msg.edit_text("❌ Qo'shiq nomi aniqlandi, lekin yuklab olish uchun manbalar topilmadi.")
             return
 
-        user_search_data[message.from_user.id] = {
-            'query': song_name,
-            'entries': entries
-        }
+        user_last_search[message.from_user.id] = {'query': song_name, 'entries': entries}
 
         text, reply_markup = create_page_response(message.from_user.id, page=0)
         await status_msg.delete()
@@ -149,7 +142,6 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
         logging.error(f"Shazam/YT Search error: {e}")
         await status_msg.edit_text("❌ Qo'shiqni aniqlashda yoki qidirishda xatolik yuz berdi.")
 
-# --- START COMMAND ---
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
     await message.answer(
@@ -158,7 +150,6 @@ async def start_handler(message: types.Message):
         "🎙 Ovozli xabar, audio yoki video fayl yuboring — undagi musiqani Shazam orqali topib beraman!"
     )
 
-# --- 1. TELEGRAM'DAN YUBORILGAN VIDEO FAYL ---
 @dp.message(F.video)
 async def handle_direct_video(message: types.Message):
     file_prefix = f"tg_vid_{message.from_user.id}_{message.message_id}"
@@ -173,13 +164,11 @@ async def handle_direct_video(message: types.Message):
         target_file = audio_path if converted else video_path
 
         await process_audio_and_find_song(message, target_file)
-
     finally:
         for path in [video_path, audio_path]:
             if os.path.exists(path):
                 os.remove(path)
 
-# --- 2. TELEGRAM'DAN YUBORILGAN AUDIO FAYL ---
 @dp.message(F.audio)
 async def handle_direct_audio(message: types.Message):
     file_prefix = f"tg_aud_{message.from_user.id}_{message.message_id}"
@@ -193,7 +182,6 @@ async def handle_direct_audio(message: types.Message):
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
-# --- 3. TELEGRAM'DAN YUBORILGAN OVOZLI XABAR ---
 @dp.message(F.voice)
 async def handle_direct_voice(message: types.Message):
     file_prefix = f"tg_voice_{message.from_user.id}_{message.message_id}"
@@ -207,7 +195,6 @@ async def handle_direct_voice(message: types.Message):
         if os.path.exists(voice_path):
             os.remove(voice_path)
 
-# --- 4. LINK ORQALI VIDEO YUKLASH ---
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def download_social_video_and_find(message: types.Message):
     url = message.text.strip()
@@ -256,7 +243,6 @@ async def download_social_video_and_find(message: types.Message):
         if downloaded_file and os.path.exists(downloaded_file):
             os.remove(downloaded_file)
 
-# --- 4.1. "MUSIQANI TOPISH" TUGMASI BOSILGANDA ---
 @dp.callback_query(F.data == "find_music_from_video")
 async def handle_find_music_button(callback: types.CallbackQuery):
     await callback.answer("⏳ Musiqa aniqlanmoqda...")
@@ -287,7 +273,6 @@ async def handle_find_music_button(callback: types.CallbackQuery):
             if os.path.exists(path):
                 os.remove(path)
 
-# --- 5. NOMI BO'YICHA QIDIRUV ---
 @dp.message(F.text)
 async def search_music(message: types.Message):
     song_name = message.text
@@ -301,11 +286,7 @@ async def search_music(message: types.Message):
         'geo_bypass': True,
         'noplaylist': True,
         'ignoreerrors': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'mweb', 'web']
-            }
-        },
+        'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'mweb', 'web']}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         }
@@ -316,16 +297,13 @@ async def search_music(message: types.Message):
         info = await loop.run_in_executor(None, lambda: YoutubeDL(ydl_opts).extract_info(song_name, download=False))
         
         raw_entries = info.get('entries', []) if info else []
-        entries = [e for e in raw_entries if e is not None]
+        entries = [e for e in raw_entries if e is not None and e.get('id')]
 
         if not entries:
             await status_msg.edit_text("❌ Hech qanday qo'shiq topilmadi.")
             return
 
-        user_search_data[message.from_user.id] = {
-            'query': song_name,
-            'entries': entries
-        }
+        user_last_search[message.from_user.id] = {'query': song_name, 'entries': entries}
 
         text, reply_markup = create_page_response(message.from_user.id, page=0)
         await status_msg.delete()
@@ -335,7 +313,6 @@ async def search_music(message: types.Message):
         logging.error(f"Text search error: {e}")
         await status_msg.edit_text("❌ Afsuski, qidiruvda xatolik yuz berdi.")
 
-# --- PAGINATION & DOWNLOAD ---
 @dp.callback_query(F.data.startswith("page_"))
 async def change_page(callback: types.CallbackQuery):
     page = int(callback.data.split("_")[1])
@@ -346,24 +323,16 @@ async def change_page(callback: types.CallbackQuery):
         pass
     await callback.answer()
 
+# --- BEVOSITA YOUTUBE VIDEO ID ORQALI YUKLAB OLISH ---
 @dp.callback_query(F.data.startswith("dl_"))
 async def download_selected_music(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    choice_idx = int(callback.data.split("_")[1])
-
-    data = user_search_data.get(user_id)
-    if not data or choice_idx >= len(data['entries']):
-        await callback.answer("❌ Ma'lumot topilmadi, iltimos qayta qidiring.", show_alert=True)
-        return
-
-    entry = data['entries'][choice_idx]
-    song_url = entry.get('webpage_url') or entry.get('url')
-    song_title = entry.get('title', 'Qo\'shiq')
+    video_id = callback.data.split("_")[1]
+    song_url = f"https://www.youtube.com/watch?v={video_id}"
 
     await callback.answer()
-    status_msg = await callback.message.answer(f"⏳ <b>{html.escape(song_title)}</b> yuklanmoqda...", parse_mode="HTML")
+    status_msg = await callback.message.answer("⏳ Qo'shiq yuklanmoqda...", parse_mode="HTML")
 
-    file_prefix = f"song_{user_id}_{callback.message.message_id}"
+    file_prefix = f"song_{callback.from_user.id}_{callback.message.message_id}"
     download_template = f"{file_prefix}.%(ext)s"
 
     ydl_opts = {
@@ -373,11 +342,7 @@ async def download_selected_music(callback: types.CallbackQuery):
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'mweb', 'web']
-            }
-        },
+        'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'mweb', 'web']}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         }
@@ -401,7 +366,7 @@ async def download_selected_music(callback: types.CallbackQuery):
                 raise e
 
         uploader = dl_info.get('uploader') or dl_info.get('artist') or "Musiqa Bot"
-        track_title = dl_info.get('track') or dl_info.get('title') or song_title
+        track_title = dl_info.get('track') or dl_info.get('title') or "Qo'shiq"
 
         files = glob.glob(f"{file_prefix}.*")
         if files:
@@ -432,9 +397,8 @@ async def download_selected_music(callback: types.CallbackQuery):
         if downloaded_file and os.path.exists(downloaded_file):
             os.remove(downloaded_file)
 
-# --- MAIN LOOP ---
 async def main():
-    global bot, connector
+    global bot
 
     ssl_context = ssl.create_default_context()
     ssl_context.check_hostname = False
