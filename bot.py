@@ -24,7 +24,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8808125320:AAF0ELVtGPEiQN8G2ClFBGngPqJQhz0X2
 bot = None
 dp = Dispatcher()
 
-# Foydalanuvchilarning sahifa holatini va oxirgi qidiruvini saqlash uchun
+# Foydalanuvchilarning oxirgi qidiruv natijalarini saqlash
 user_last_search = {}
 
 def format_duration(seconds):
@@ -57,7 +57,6 @@ def create_page_response(user_id, page=0):
         
         text += f"<b>{idx}.</b> <i>{title}</i>{duration_str}\n"
         
-        # Tugma callback_data'siga to'g'ridan-to'g'ri YouTube Video ID joylanadi
         if video_id:
             row_buttons.append(
                 types.InlineKeyboardButton(text=str(idx), callback_data=f"dl_{video_id}")
@@ -147,6 +146,7 @@ async def start_handler(message: types.Message):
     await message.answer(
         "Assalomu alaykum!\n\n"
         "🎵 Musiqa nomini yozing — topib beraman.\n"
+        "📹 Instagram/TikTok/YouTube havolasini yuboring — videoni yuklab beraman.\n"
         "🎙 Ovozli xabar, audio yoki video fayl yuboring — undagi musiqani Shazam orqali topib beraman!"
     )
 
@@ -195,6 +195,7 @@ async def handle_direct_voice(message: types.Message):
         if os.path.exists(voice_path):
             os.remove(voice_path)
 
+# --- SOCIAL MEDIA (INSTAGRAM, TIKTOK, YOUTUBE) LINKS ---
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def download_social_video_and_find(message: types.Message):
     url = message.text.strip()
@@ -203,8 +204,9 @@ async def download_social_video_and_find(message: types.Message):
     file_prefix = f"link_vid_{message.from_user.id}_{message.message_id}"
     downloaded_file = None
 
+    # Instagram Reels, TikTok va YouTube uchun moslashtirilgan eng optimal sozlamalar
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'best',
         'outtmpl': f"{file_prefix}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
@@ -213,6 +215,8 @@ async def download_social_video_and_find(message: types.Message):
         'ignoreerrors': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
         }
     }
 
@@ -323,7 +327,7 @@ async def change_page(callback: types.CallbackQuery):
         pass
     await callback.answer()
 
-# --- BEVOSITA YOUTUBE VIDEO ID ORQALI YUKLAB OLISH ---
+# --- YOUTUBE VIDEO ID ORQALI YUKLAB OLISH ---
 @dp.callback_query(F.data.startswith("dl_"))
 async def download_selected_music(callback: types.CallbackQuery):
     video_id = callback.data.split("_")[1]
