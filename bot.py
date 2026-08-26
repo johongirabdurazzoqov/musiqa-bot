@@ -7,7 +7,6 @@ import glob
 import logging
 import html
 import ssl
-import json
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
@@ -28,31 +27,6 @@ dp = Dispatcher()
 
 # Foydalanuvchilarning oxirgi qidiruv natijalarini saqlash
 user_last_search = {}
-
-# --- STATISTIKA VA FOYDALANUVCHILARNI SAQLASH FUNKSIYALARI ---
-USERS_FILE = "users.json"
-
-def get_users():
-    """Foydalanuvchilar ID ro'yxatini qaytaradi"""
-    if not os.path.exists(USERS_FILE):
-        return set()
-    try:
-        with open(USERS_FILE, "r") as f:
-            data = json.load(f)
-            return set(data)
-    except Exception:
-        return set()
-
-def add_user(user_id: int):
-    """Yangi foydalanuvchini bazaga qo'shadi"""
-    users = get_users()
-    if user_id not in users:
-        users.add(user_id)
-        try:
-            with open(USERS_FILE, "w") as f:
-                json.dump(list(users), f)
-        except Exception as e:
-            logging.error(f"Foydalanuvchini saqlashda xatolik: {e}")
 
 def format_duration(seconds):
     if not seconds:
@@ -104,17 +78,14 @@ def create_page_response(user_id, page=0):
     return text, builder.as_markup()
 
 async def extract_audio_from_video(video_path: str, output_audio_path: str):
-    """
-    Videodan audioni Shazam tushunadigan toza WAV/MP3 formatida ajratib oladi.
-    """
     try:
         proc = await asyncio.create_subprocess_exec(
             'ffmpeg', '-y', '-i', video_path,
-            '-t', '20',             # Dastlabki 20 soniyasi Yetarli
-            '-vn',                  # Videoni o'chirish
-            '-acodec', 'libmp3lame',# MP3 kodekdan foydalanish
-            '-ar', '44100',         # Sample rate 44.1kHz
-            '-ac', '1',             # Mono kanal
+            '-t', '20',
+            '-vn',
+            '-acodec', 'libmp3lame',
+            '-ar', '44100',
+            '-ac', '1',
             output_audio_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL
@@ -184,22 +155,12 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    # Faqat /start bosilganda foydalanuvchini bazaga qo'shish
-    add_user(message.from_user.id)
-    
     await message.answer(
         "Assalomu alaykum!\n\n"
         "🎵 Musiqa nomini yozing — topib beraman.\n"
         "📹 Instagram/TikTok/YouTube havolasini yuboring — videoni yuklab beraman.\n"
         "🎙 Ovozli xabar, audio yoki video fayl yuboring — undagi musiqani Shazam orqali topib beraman!"
     )
-
-# --- STATISTIKA BUYRUG'I ---
-@dp.message(F.text == "/stat")
-async def show_stats(message: types.Message):
-    users = get_users()
-    count = len(users)
-    await message.answer(f"📊 <b>Bot statistikasi:</b>\n\nJami foydalanuvchilar soni: <b>{count}</b> ta", parse_mode="HTML")
 
 @dp.message(F.video)
 async def handle_direct_video(message: types.Message):
@@ -255,7 +216,6 @@ async def handle_direct_voice(message: types.Message):
             except Exception:
                 pass
 
-# --- SOCIAL MEDIA (INSTAGRAM, TIKTOK, YOUTUBE) LINKS ---
 @dp.message(F.text.startswith("http://") | F.text.startswith("https://"))
 async def download_social_video_and_find(message: types.Message):
     url = message.text.strip()
@@ -327,8 +287,6 @@ async def handle_find_music_button(callback: types.CallbackQuery):
         await bot.download_file(video_file.file_path, video_path)
 
         converted = await extract_audio_from_video(video_path, audio_path)
-        
-        # Agar FFmpeg audioni muvaffaqiyatli ajratgan bo'lsa audio faylni, bo'lmasa video faylning o'zini uzatamiz
         target_file = audio_path if converted else video_path
 
         await process_audio_and_find_song(callback.message, target_file)
@@ -395,7 +353,6 @@ async def change_page(callback: types.CallbackQuery):
         pass
     await callback.answer()
 
-# --- YOUTUBE VIDEO ID ORQALI YUKLAB OLISH ---
 @dp.callback_query(F.data.startswith("dl_"))
 async def download_selected_music(callback: types.CallbackQuery):
     video_id = callback.data.split("_")[1]
