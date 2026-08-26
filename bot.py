@@ -19,7 +19,8 @@ logging.getLogger("symphonia").setLevel(logging.ERROR)
 logging.getLogger("symphonia_bundle_mp3").setLevel(logging.ERROR)
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8808125320:AAH3SOj_cqf29fTsos2EWVIXVN1uzAHvQ7Q")
+# XAVFSIZLIK: Tokenni kod ichiga yozmang, muhit o'zgaruvchisidan oling!
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = None
 dp = Dispatcher()
@@ -77,10 +78,18 @@ def create_page_response(user_id, page=0):
     return text, builder.as_markup()
 
 async def extract_audio_from_video(video_path: str, output_audio_path: str):
+    """
+    Videodan audioni Shazam tushunadigan toza WAV/MP3 formatida ajratib oladi.
+    """
     try:
-        # '-t 20' faqat dastlabki 20 soniyani ajratadi - Shazam uchun yetarli va jarayon juda tez kechadi
         proc = await asyncio.create_subprocess_exec(
-            'ffmpeg', '-y', '-i', video_path, '-t', '20', '-vn', '-ac', '1', '-ar', '22050', output_audio_path,
+            'ffmpeg', '-y', '-i', video_path,
+            '-t', '20',             # Dastlabki 20 soniyasi Yetarli
+            '-vn',                  # Videoni o'chirish
+            '-acodec', 'libmp3lame',# MP3 kodekdan foydalanish
+            '-ar', '44100',         # Sample rate 44.1kHz
+            '-ac', '1',             # Mono kanal
+            output_audio_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL
         )
@@ -112,7 +121,6 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
 
         await status_msg.edit_text(f"🔎 Qo'shiq topildi: <b>{html.escape(song_name)}</b>\nVariantlar qidirilmoqda...", parse_mode="HTML")
 
-        # Tezlashtirilgan qidiruv sozlamalari (extract_flat qo'shilgan)
         yt_opts = {
             'default_search': 'ytsearch10:',
             'quiet': True,
@@ -283,6 +291,8 @@ async def handle_find_music_button(callback: types.CallbackQuery):
         await bot.download_file(video_file.file_path, video_path)
 
         converted = await extract_audio_from_video(video_path, audio_path)
+        
+        # Agar FFmpeg audioni muvaffaqiyatli ajratgan bo'lsa audio faylni, bo'lmasa video faylning o'zini uzatamiz
         target_file = audio_path if converted else video_path
 
         await process_audio_and_find_song(callback.message, target_file)
@@ -440,7 +450,6 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN, session=bot_session)
 
-    # Begona kanallarni chaqiruvchi eski webhook'lar va eski xabarlarni tozalaymiz
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logging.info("Eski Webhook va kutilayotgan so'rovlar muvaffaqiyatli tozalandi.")
