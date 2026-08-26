@@ -7,6 +7,7 @@ import glob
 import logging
 import html
 import ssl
+import json
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
@@ -27,6 +28,31 @@ dp = Dispatcher()
 
 # Foydalanuvchilarning oxirgi qidiruv natijalarini saqlash
 user_last_search = {}
+
+# --- STATISTIKA VA FOYDALANUVCHILARNI SAQLASH FUNKSIYALARI ---
+USERS_FILE = "users.json"
+
+def get_users():
+    """Foydalanuvchilar ID ro'yxatini qaytaradi"""
+    if not os.path.exists(USERS_FILE):
+        return set()
+    try:
+        with open(USERS_FILE, "r") as f:
+            data = json.load(f)
+            return set(data)
+    except Exception:
+        return set()
+
+def add_user(user_id: int):
+    """Yangi foydalanuvchini bazaga qo'shadi"""
+    users = get_users()
+    if user_id not in users:
+        users.add(user_id)
+        try:
+            with open(USERS_FILE, "w") as f:
+                json.dump(list(users), f)
+        except Exception as e:
+            logging.error(f"Foydalanuvchini saqlashda xatolik: {e}")
 
 def format_duration(seconds):
     if not seconds:
@@ -158,12 +184,22 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
+    # Faqat /start bosilganda foydalanuvchini bazaga qo'shish
+    add_user(message.from_user.id)
+    
     await message.answer(
         "Assalomu alaykum!\n\n"
         "🎵 Musiqa nomini yozing — topib beraman.\n"
         "📹 Instagram/TikTok/YouTube havolasini yuboring — videoni yuklab beraman.\n"
         "🎙 Ovozli xabar, audio yoki video fayl yuboring — undagi musiqani Shazam orqali topib beraman!"
     )
+
+# --- STATISTIKA BUYRUG'I ---
+@dp.message(F.text == "/stat")
+async def show_stats(message: types.Message):
+    users = get_users()
+    count = len(users)
+    await message.answer(f"📊 <b>Bot statistikasi:</b>\n\nJami foydalanuvchilar soni: <b>{count}</b> ta", parse_mode="HTML")
 
 @dp.message(F.video)
 async def handle_direct_video(message: types.Message):
