@@ -19,7 +19,7 @@ logging.getLogger("symphonia").setLevel(logging.ERROR)
 logging.getLogger("symphonia_bundle_mp3").setLevel(logging.ERROR)
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8808125320:AAF0ELVtGPEiQN8G2ClFBGngPqJQhz0X2MU")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8808125320:AAH3SOj_cqf29fTsos2EWVIXVN1uzAHvQ7Q")
 
 bot = None
 dp = Dispatcher()
@@ -78,8 +78,9 @@ def create_page_response(user_id, page=0):
 
 async def extract_audio_from_video(video_path: str, output_audio_path: str):
     try:
+        # '-t 20' faqat dastlabki 20 soniyani ajratadi - Shazam uchun yetarli va jarayon juda tez kechadi
         proc = await asyncio.create_subprocess_exec(
-            'ffmpeg', '-y', '-i', video_path, '-vn', '-ac', '2', '-ar', '44100', '-ab', '192k', output_audio_path,
+            'ffmpeg', '-y', '-i', video_path, '-t', '20', '-vn', '-ac', '1', '-ar', '22050', output_audio_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL
         )
@@ -111,14 +112,16 @@ async def process_audio_and_find_song(message: types.Message, file_path: str):
 
         await status_msg.edit_text(f"🔎 Qo'shiq topildi: <b>{html.escape(song_name)}</b>\nVariantlar qidirilmoqda...", parse_mode="HTML")
 
+        # Tezlashtirilgan qidiruv sozlamalari (extract_flat qo'shilgan)
         yt_opts = {
-            'default_search': 'ytsearch20:',
+            'default_search': 'ytsearch10:',
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
             'geo_bypass': True,
             'noplaylist': True,
             'ignoreerrors': True,
+            'extract_flat': 'in_playlist',
             'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'mweb', 'web']}},
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -218,7 +221,7 @@ async def download_social_video_and_find(message: types.Message):
     downloaded_file = None
 
     ydl_opts = {
-        'format': 'best',
+        'format': 'bestvideo+bestaudio/best',
         'outtmpl': f"{file_prefix}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
@@ -300,14 +303,15 @@ async def search_music(message: types.Message):
     song_name = message.text
     status_msg = await message.answer("🔎 Qo'shiqlar qidirilmoqda, kuting...")
 
-    ydl_opts = {
-        'default_search': 'ytsearch20:',
+    yt_opts = {
+        'default_search': 'ytsearch10:',
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
         'noplaylist': True,
         'ignoreerrors': True,
+        'extract_flat': 'in_playlist',
         'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'mweb', 'web']}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -316,7 +320,7 @@ async def search_music(message: types.Message):
 
     try:
         loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, lambda: YoutubeDL(ydl_opts).extract_info(song_name, download=False))
+        info = await loop.run_in_executor(None, lambda: YoutubeDL(yt_opts).extract_info(song_name, download=False))
         
         raw_entries = info.get('entries', []) if info else []
         entries = [e for e in raw_entries if e is not None and e.get('id')]
@@ -435,6 +439,13 @@ async def main():
     bot_session._session = raw_session
 
     bot = Bot(token=BOT_TOKEN, session=bot_session)
+
+    # Begona kanallarni chaqiruvchi eski webhook'lar va eski xabarlarni tozalaymiz
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Eski Webhook va kutilayotgan so'rovlar muvaffaqiyatli tozalandi.")
+    except Exception as e:
+        logging.error(f"Webhook tozalashda xatolik: {e}")
 
     while True:
         try:
